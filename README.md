@@ -31,3 +31,4 @@ O projeto utiliza um arquivo `Makefile` para automatizar o processo de compilaç
 Para compilar o projeto e gerar os executáveis na pasta `bin/`, execute o seguinte comando na raiz do diretório:
 ```bash
 make
+./bin/simulador
