@@ -1,0 +1,165 @@
+[INF1316] Everton Pereira Militão - 2320462, Lúcio Campos - 2320955
+
+RELATÓRIO T1: Simulando o escalonamento preemptivo de processos com chamadas de sistema 
+
+1. Introdução
+
+O presente relatório detalha a arquitetura e a implementação do Primeiro Trabalho (T1) da 
+disciplina INF1316 - Sistemas Operacionais.
+
+O objetivo principal deste projeto foi desenvolver, na linguagem C, um simulador de núcleo 
+de sistema operacional (KernelSim) capaz de gerenciar a execução concorrente de cinco 
+processos de aplicação (A1 a A5). Para alcançar este objetivo, aplicamos na prática conceitos 
+fundamentais da disciplina, utilizando primitivas do ambiente Unix/Linux, tais como a criação 
+de processos dinâmicos (fork e exec), o controle de execução via envio de sinais (SIGSTOP, SIGCONT, 
+SIGTSTP) e a comunicação inter-processos (IPC) por meio de pipes.
+
+A simulação implementa um escalonador preemptivo baseado no algoritmo de Round-Robin. O Kernel 
+intercala ativamente o uso da CPU respondendo a interrupções de hardware assíncronas geradas por 
+um controlador simulado paralelamente (InterController Sim). O sistema é capaz de lidar tanto 
+com a preempção forçada pelo fim da fatia de tempo (IRQ0), quanto com o bloqueio e posterior 
+desbloqueio de processos decorrentes de chamadas de sistema (SYSCALL) para operações de entrada 
+e saída nos dispositivos D1 e D2 (IRQ1 e IRQ2).
+
+Nas seções a seguir, detalharemos a composição estrutural dos programas que compõem esta entrega, 
+o fluxo de comunicação estabelecido entre eles e a lógica utilizada para garantir a consistência 
+do contexto e dos estados de cada processo durante a execução.
+
+2. Programas Integrantes e Arquitetura do Sistema
+
+Para garantir a organização e a modularidade do código, o nosso projeto foi estruturado na seguinte 
+árvore de diretórios e arquivos:
+
+T1_INF1316/
+├── bin/
+│   ├── app
+│   └── simulador
+├── src/
+│   ├── app.c
+│   ├── common.h
+│   ├── controller.c
+│   ├── kernel.c
+│   └── main.c
+├── Makefile
+└── Relatório.pdf
+
+O código foi dividido em módulos para separar as responsabilidades do sistema operacional e das 
+aplicações. A compilação via Makefile gera dois executáveis na pasta bin/: o simulador, que engloba o 
+núcleo e o hardware, e o app, que representa os processos de usuário.
+
+2.1. Executável Principal: simulador
+
+Este é o binário central que, ao ser iniciado, utiliza o fork() para se dividir em dois processos 
+principais: o Kernel e o Controlador de Interrupções. Seus componentes são:
+
+- main.c: Realiza o bootstrap do sistema. Cria o pipe para comunicação entre hardware e kernel e executa 
+o fork() inicial. O processo pai assume a função de Kernel e o filho a de Controlador. Ao fim da execução, 
+limpa os recursos e encerra os processos.
+
+- kernel.c: Responsável pelo gerenciamento de processos e do escalonador Round-Robin. Cria as instâncias 
+das aplicações via fork e exec e monitora o pipe em busca de interrupções ou chamadas de sistema. Altera 
+o estado dos processos usando sinais (SIGSTOP e SIGCONT) e trata o SIGTSTP (Ctrl+Z) para exibir o status 
+do sistema.
+
+- controller.c: Emula o hardware do sistema. Funciona em um loop enviando interrupções ao Kernel pelo pipe. 
+Dispara o IRQ0 (fatia de tempo) a cada 500ms e sorteia o fim de operações de E/S nos dispositivos D1 e D2 
+(IRQ1 e IRQ2).
+
+2.2. Executável de Aplicação: app
+
+Representa os programas de usuário que rodam sobre o Kernel simulado.
+
+- app.c: Cada uma das cinco instâncias (A1 a A5) executa um loop de processamento (MAX). Durante os ciclos, 
+informa ao Kernel sua posição atual (PC) e memória acessada. Ocasionalmente, dispara uma SYSCALL pelo pipe 
+para solicitar operações de disco, o que causa o seu bloqueio imediato pelo Kernel.
+
+2.3. Arquivos de Suporte
+
+- common.h: Centraliza as definições de variáveis globais e estruturas de estado. Permite que o Kernel 
+acesse o contexto de todos os processos (PIDs, memórias, contadores de I/O) para gerar o relatório em tempo 
+real.
+
+- Makefile: Automatiza a compilação de todos os módulos, organiza os binários na pasta de destino e oferece 
+o comando clean para limpar o ambiente de trabalho.
+
+3. Comunicação Inter-Processos (IPC)
+
+O funcionamento do programa se baseia em uma orquestração precisa de processos que operam de forma 
+independente. Tudo começa com o comando make, que utiliza o Makefile para compilar os códigos (main.c, 
+kernel.c, controller.c e app.c) e gerar os executáveis simulador e app. Ao iniciar o simulador, a função 
+main atua como o bootstrap do sistema, utilizando chamadas de sistema fork() para dividir o programa e 
+estabelecer os canais de comunicação, que se dividem em duas frentes:
+
+- Fluxo de Dados (Pipes): A primeira tarefa do main é criar um Pipe, que serve como o barramento de dados 
+central do sistema. O KernelSim passa a monitorar esse canal de forma contínua através da função ler_mensagem_pipe. 
+É por este canal que trafegam mensagens críticas: o simulador de hardware (InterController) escreve eventos de 
+interrupção ("IRQ0" a cada 500ms, "IRQ1" e "IRQ2"), enquanto os processos de aplicação enviam relatórios de contexto 
+("UPDATE" com o Program Counter e memória atual) e solicitações de entrada e saída ("SYSCALL").
+
+- Fluxo de Controle (Sinais): O gerenciamento de quem utiliza o processador não trafega pelo pipe, mas sim através 
+de sinais do sistema operacional hospedeiro. Após iniciar e carregar o binário app cinco vezes na memória via fork() 
+e execl(), o KernelSim envia imediatamente um sinal SIGSTOP para todas as instâncias (A1 a A5), mantendo-as pausadas. 
+A execução só ganha vida quando o Kernel seleciona um processo e lhe envia um SIGCONT. Além disso, esse fluxo lida 
+com a intervenção do utilizador: ao premir Ctrl+Z, o sistema operacional real envia um SIGTSTP, que é capturado 
+pelo KernelSim para acionar instantaneamente a impressão de um relatório com a "fotografia" do status de todas 
+as aplicações.
+
+4. Lógica de Escalonamento e Gerenciamento de Estados
+
+A partir do momento em que os processos estão criados e o canal de IPC está aberto, o sistema opera em um ciclo 
+dinâmico regido por eventos que determinam o uso da CPU e o estado de cada aplicação.
+
+- Funcionamento do algoritmo Round-Robin: A simulação adota um escalonamento preemptivo regido pelo tempo. O 
+InterController age como o relógio do hardware, injetando um "IRQ0" no pipe a cada 500ms. Ao ler esse aviso, o 
+Kernel entende que a fatia de tempo (time-slice) do processo atual acabou. Ele imediatamente interrompe o processo 
+em execução com um SIGSTOP, salva seu contexto atualizado (obtido pelas mensagens de "UPDATE") e cede a CPU para o 
+próximo processo da fila circular enviando um SIGCONT.
+
+- A transição de estados dos processos: A linearidade do Round-Robin é frequentemente alterada por operações que mudam 
+o estado lógico das aplicações durante a sua jornada até o encerramento (quando atingem o limite de ciclos MAX).
+
+Essas transições ocorrem da seguinte forma:
+
+- Pronto: Estado inicial de todos os processos pausados pelo Kernel, aguardando a sua vez na fila do escalonador.
+
+- Executando: O processo que recebeu o SIGCONT e está ativamente acessando a CPU e incrementando seu PC. Volta ao 
+estado "Pronto" se sofrer preempção por um "IRQ0".
+
+- Bloqueado: Ocorre quando uma aplicação no estado "Executando" precisa ler ou escrever em um disco (D1 ou D2). Ela 
+envia uma "SYSCALL" e o Kernel a retira da CPU, colocando-a numa fila de espera específica. O processo sai de "Bloqueado" 
+e volta para "Pronto" apenas quando o InterController sortear a interrupção de hardware correspondente (IRQ1 ou IRQ2), 
+sinalizando que o disco terminou a operação.
+
+- Terminado: Atingido quando a aplicação finaliza sua execução completa. Quando todos os cinco processos chegam a este 
+estado, o Kernel detecta o fim do trabalho, mata o processo do InterController e encerra a simulação libertando os recursos.
+
+5. Instruções de Compilação e Execução
+
+O projeto conta com um arquivo Makefile na raiz do diretório para automatizar a geração dos binários. Para compilar 
+e iniciar a simulação, abra o terminal na pasta principal do projeto e utilize os comandos abaixo:
+
+LINHA DE COMPILAÇÃO:
+make
+
+LINHA DE EXECUÇÃO:
+./bin/simulador
+
+Nota: Durante a execução, você pode pressionar Ctrl+Z a qualquer momento para disparar o sinal SIGTSTP, o que 
+pausará a simulação e imprimirá na tela o relatório instantâneo com os estados, contadores e memórias de todos os 
+processos. Basta pressionar Enter para a simulação continuar de onde parou.
+
+6. Conclusão
+
+O desenvolvimento deste simulador nos permitiu aplicar na prática vários fundamentos de Sistemas Operacionais vistos 
+ao longo da disciplina. A implementação exigiu a orquestração de chamadas de sistema clássicas (fork, exec), a 
+manipulação de fluxo por meio de sinais (SIGSTOP, SIGCONT) e a construção de um algoritmo de escalonamento Round-Robin 
+básico, lidando com preempção por tempo e bloqueio por dispositivos de E/S.
+
+Para o mecanismo principal de Comunicação Inter-Processos (IPC), nós decidimos utilizar Pipes. Achamos que essa seria 
+a melhor escolha para o nosso caso porque o simulador é bastante guiado por eventos sequenciais (as interrupções do 
+hardware e as chamadas de sistema enviadas pelas aplicações). Como os pipes operam sob uma política FIFO (First-In-First-Out) 
+e já possuem uma certa sincronização natural nas operações de leitura e escrita, pareceu fazer mais sentido para nós que 
+o Kernel apenas "escutasse" esse canal e consumisse as mensagens na ordem em que chegam.
+
+Acreditamos que essa abordagem nos ajudou a manter a comunicação mais organizada e a isolar razoavelmente bem os processos, 
+facilitando a simulação de como um sistema operacional real lidaria com a escassez de CPU de forma justa.
